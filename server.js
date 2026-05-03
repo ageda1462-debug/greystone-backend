@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const youtubeDl = require('youtube-dl-exec');
 const { exec } = require('child_process');
 
 const app = express();
@@ -24,7 +23,7 @@ app.get('/test', (req, res) => {
 });
 
 // Search YouTube
-app.get('/search', async (req, res) => {
+app.get('/search', (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'No query provided' });
 
@@ -59,24 +58,26 @@ app.get('/search', async (req, res) => {
 });
 
 // Get stream URL
-app.get('/stream/:videoId', async (req, res) => {
+app.get('/stream/:videoId', (req, res) => {
   const { videoId } = req.params;
 
-  try {
-    const result = await youtubeDl(`https://www.youtube.com/watch?v=${videoId}`, {
-      format: 'bestaudio',
-      getUrl: true,
-    });
+  exec(
+    `yt-dlp -f bestaudio --get-url --js-runtimes nodejs --no-warnings https://www.youtube.com/watch?v=${videoId}`,
+    { timeout: 30000 },
+    (error, stdout, stderr) => {
+      if (error) {
+        console.error('Stream error:', stderr);
+        return res.status(500).json({ error: 'Failed to get stream URL', details: stderr });
+      }
 
-    res.json({ url: result });
-  } catch (error) {
-    console.error('Stream error full:', error);
-    res.status(500).json({ 
-      error: 'Failed to get stream URL', 
-      details: error.message,
-      stack: error.stack
-    });
-  }
+      const url = stdout.trim().split('\n')[0];
+      if (!url) {
+        return res.status(500).json({ error: 'No URL found' });
+      }
+
+      res.json({ url });
+    }
+  );
 });
 
 const PORT = process.env.PORT || 8080;
