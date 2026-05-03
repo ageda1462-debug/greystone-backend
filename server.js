@@ -6,6 +6,27 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// List of public Invidious instances to try
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.io.lol',
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+];
+
+async function fetchFromInvidious(path) {
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const response = await fetch(`${instance}${path}`);
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+      continue;
+    }
+  }
+  throw new Error('All Invidious instances failed');
+}
+
 // Health check
 app.get('/', (req, res) => {
   res.json({ status: 'Greystone backend running' });
@@ -22,62 +43,58 @@ app.get('/test', (req, res) => {
   });
 });
 
-// Search YouTube
-app.get('/search', (req, res) => {
+// Search YouTube via Invidious
+app.get('/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'No query provided' });
 
-  exec(`yt-dlp "ytsearch5:${query}" --dump-json --no-playlist --flat-playlist`, (error, stdout, stderr) => {
-    if (error) {
-      console.error('Search error:', stderr);
-      return res.status(500).json({ error: 'Search failed', details: stderr });
-    }
+  try {
+    const data = await fetchFromInvidious(
+      `/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,lengthSeconds,videoThumbnails`
+    );
 
-    try {
-      const lines = stdout.trim().split('\n').filter(Boolean);
-      const tracks = lines.map(line => {
-        try {
-          const data = JSON.parse(line);
-          return {
-            id: data.id,
-            title: data.title,
-            artist: data.uploader || data.channel || 'Unknown',
-            thumbnail: data.thumbnail,
-            duration: data.duration,
-          };
-        } catch {
-          return null;
-        }
-      }).filter(Boolean);
+    const tracks = data.slice(0, 10).map(item => ({
+      id: item.videoId,
+      title: item.title,
+      artist: item.author,
+      thumbnail: item.videoThumbnails?.[0]?.url || '',
+      duration: item.lengthSeconds,
+    }));
 
-      res.json({ results: tracks });
-    } catch (parseError) {
-      res.status(500).json({ error: 'Parse failed', details: parseError.message });
-    }
-  });
+    res.json({ results: tracks });
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ error: 'Search failed', details: error.message });
+  }
 });
 
-// Get stream URL
-app.get('/stream/:videoId', (req, res) => {
+// Get stream URL via Invidious
+app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
-  exec(
-    `yt-dlp -f bestaudio --get-url --js-runtimes nodejs --no-warnings https://www.youtube.com/watch?v=${videoId}`,
-    { timeout: 30000 },
-    (error, stdout, stderr) => {
-      if (error) {
-        console.error('Stream error:', stderr);
-        return res.status(500).json({ error: 'Failed to get stream URL', details: stderr });
-      }
+  try {
+    const data = await fetchFromInvidious(`/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`);
 
-      const url = stdout.trim().split('\n')[0];
-      if (!url) {
-        return res.status(500).json({ error: 'No URL found' });
-      }
+    // Find best audio format
+    const audioFormats = data.adaptiveFormats
+      ?.filter(f => f.type?.startsWith('audio/') && f.url)
+      ?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
-      res.json({ url });
+    if (audioFormats && audioFormats.length > 0) {
+      return res.json({ url: audioFormats[0].url });
     }
-  );
+
+    // Fallback to format streams
+    const fallback = data.formatStreams?.find(f => f.url);
+    if (fallback) {
+      return res.json({ url: fallback.url });
+    }
+
+    res.status(500).json({ error: 'No audio stream found' });
+  } catch (error) {
+    console.error('Stream error:', error);
+    res.status(500).json({ error: 'Failed to get stream URL', details: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 8080;
