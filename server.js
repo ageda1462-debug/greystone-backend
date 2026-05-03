@@ -28,31 +28,34 @@ app.get('/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'No query provided' });
 
-  try {
-    const result = await youtubeDl(`ytsearch5:${query}`, {
-      dumpJson: true,
-      noPlaylist: true,
-      flatPlaylist: true,
-    });
+  exec(`yt-dlp "ytsearch5:${query}" --dump-json --no-playlist --flat-playlist`, (error, stdout, stderr) => {
+    if (error) {
+      console.error('Search error:', stderr);
+      return res.status(500).json({ error: 'Search failed', details: stderr });
+    }
 
-    const results = Array.isArray(result) ? result : [result];
-    const tracks = results.map(data => ({
-      id: data.id,
-      title: data.title,
-      artist: data.uploader,
-      thumbnail: data.thumbnail,
-      duration: data.duration,
-    })).filter(Boolean);
+    try {
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      const tracks = lines.map(line => {
+        try {
+          const data = JSON.parse(line);
+          return {
+            id: data.id,
+            title: data.title,
+            artist: data.uploader || data.channel || 'Unknown',
+            thumbnail: data.thumbnail,
+            duration: data.duration,
+          };
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
 
-    res.json({ results: tracks });
-  } catch (error) {
-    console.error('Search error full:', error);
-    res.status(500).json({ 
-      error: 'Search failed', 
-      details: error.message,
-      stack: error.stack 
-    });
-  }
+      res.json({ results: tracks });
+    } catch (parseError) {
+      res.status(500).json({ error: 'Parse failed', details: parseError.message });
+    }
+  });
 });
 
 // Get stream URL
