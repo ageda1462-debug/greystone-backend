@@ -1,5 +1,6 @@
 [build]
 builder = "nixpacks"
+nixPkgs = ["python3", "nodejs"]
 
 [deploy]
 startCommand = "node server.js"
