@@ -6,25 +6,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// List of public Invidious instances to try
-const INVIDIOUS_INSTANCES = [
-  'https://invidious.io.lol',
-  'https://inv.nadeko.net',
-  'https://invidious.nerdvpn.de',
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+
+// Piped instances to try for streaming
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.in',
+  'https://api.piped.yt',
 ];
 
-async function fetchFromInvidious(path) {
-  for (const instance of INVIDIOUS_INSTANCES) {
+async function getStreamFromPiped(videoId) {
+  for (const instance of PIPED_INSTANCES) {
     try {
-      const response = await fetch(`${instance}${path}`);
+      const response = await fetch(`${instance}/streams/${videoId}`);
       if (response.ok) {
-        return await response.json();
+        const data = await response.json();
+        // Get best audio stream
+        const audioStreams = data.audioStreams
+          ?.filter(s => s.url)
+          ?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        if (audioStreams && audioStreams.length > 0) {
+          return audioStreams[0].url;
+        }
       }
     } catch {
       continue;
     }
   }
-  throw new Error('All Invidious instances failed');
+  throw new Error('All Piped instances failed');
 }
 
 // Health check
@@ -32,33 +41,56 @@ app.get('/', (req, res) => {
   res.json({ status: 'Greystone backend running' });
 });
 
-// Test yt-dlp installation
+// Test endpoint
 app.get('/test', (req, res) => {
-  exec('yt-dlp --version', (error, stdout, stderr) => {
-    if (error) {
-      res.json({ installed: false, error: error.message, stderr });
-    } else {
-      res.json({ installed: true, version: stdout.trim() });
-    }
+  exec('yt-dlp --version', (error, stdout) => {
+    res.json({ 
+      ytdlp: error ? 'not found' : stdout.trim(),
+      youtubeApiKey: YOUTUBE_API_KEY ? 'set' : 'missing'
+    });
   });
 });
 
-// Search YouTube via Invidious
+// Search YouTube using official API
 app.get('/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'No query provided' });
 
   try {
-    const data = await fetchFromInvidious(
-      `/api/v1/search?q=${encodeURIComponent(query)}&type=video&fields=videoId,title,author,lengthSeconds,videoThumbnails`
+    const response = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=10&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`
     );
 
-    const tracks = data.slice(0, 10).map(item => ({
-      id: item.videoId,
-      title: item.title,
-      artist: item.author,
-      thumbnail: item.videoThumbnails?.[0]?.url || '',
-      duration: item.lengthSeconds,
+    if (!response.ok) {
+      const err = await response.json();
+      return res.status(500).json({ error: 'YouTube API error', details: err });
+    }
+
+    const data = await response.json();
+
+    // Get video durations
+    const videoIds = data.items.map(item => item.id.videoId).join(',');
+    const detailsResponse = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds}&key=${YOUTUBE_API_KEY}`
+    );
+    const detailsData = await detailsResponse.json();
+
+    const durationMap = {};
+    detailsData.items.forEach(item => {
+      const iso = item.contentDetails.duration;
+      const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+      const hours = parseInt(match[1] || 0);
+      const minutes = parseInt(match[2] || 0);
+      const seconds = parseInt(match[3] || 0);
+      durationMap[item.id] = hours * 3600 + minutes * 60 + seconds;
+    });
+
+    const tracks = data.items.map(item => ({
+      id: item.id.videoId,
+      title: item.snippet.title,
+      artist: item.snippet.channelTitle,
+      thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url,
+      duration: durationMap[item.id.videoId] || 0,
     }));
 
     res.json({ results: tracks });
@@ -68,29 +100,13 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// Get stream URL via Invidious
+// Get stream URL via Piped
 app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
   try {
-    const data = await fetchFromInvidious(`/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`);
-
-    // Find best audio format
-    const audioFormats = data.adaptiveFormats
-      ?.filter(f => f.type?.startsWith('audio/') && f.url)
-      ?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-    if (audioFormats && audioFormats.length > 0) {
-      return res.json({ url: audioFormats[0].url });
-    }
-
-    // Fallback to format streams
-    const fallback = data.formatStreams?.find(f => f.url);
-    if (fallback) {
-      return res.json({ url: fallback.url });
-    }
-
-    res.status(500).json({ error: 'No audio stream found' });
+    const url = await getStreamFromPiped(videoId);
+    res.json({ url });
   } catch (error) {
     console.error('Stream error:', error);
     res.status(500).json({ error: 'Failed to get stream URL', details: error.message });
