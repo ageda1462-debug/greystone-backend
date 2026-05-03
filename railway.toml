@@ -3,4 +3,4 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "pip install yt-dlp && node server.js"
-restartPolicyType = "on-failure"
+restartPolicyType = "ON_FAILURE"
