@@ -45,7 +45,8 @@ app.get('/stream/:videoId', async (req, res) => {
 
     res.json({ url: result });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to get stream URL', details: error.message });
+    console.error('Search error:', error);
+    res.status(500).json({ error: 'Search failed', details: error.message, stack: error.stack });
   }
 });
 
