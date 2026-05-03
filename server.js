@@ -8,34 +8,6 @@ app.use(express.json());
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
-// Piped instances to try for streaming
-const PIPED_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.in',
-  'https://api.piped.yt',
-];
-
-async function getStreamFromPiped(videoId) {
-  for (const instance of PIPED_INSTANCES) {
-    try {
-      const response = await fetch(`${instance}/streams/${videoId}`);
-      if (response.ok) {
-        const data = await response.json();
-        // Get best audio stream
-        const audioStreams = data.audioStreams
-          ?.filter(s => s.url)
-          ?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        if (audioStreams && audioStreams.length > 0) {
-          return audioStreams[0].url;
-        }
-      }
-    } catch {
-      continue;
-    }
-  }
-  throw new Error('All Piped instances failed');
-}
-
 // Health check
 app.get('/', (req, res) => {
   res.json({ status: 'Greystone backend running' });
@@ -100,17 +72,27 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// Get stream URL via Piped
-app.get('/stream/:videoId', async (req, res) => {
+// Get stream URL using yt-dlp with cookies
+app.get('/stream/:videoId', (req, res) => {
   const { videoId } = req.params;
 
-  try {
-    const url = await getStreamFromPiped(videoId);
-    res.json({ url });
-  } catch (error) {
-    console.error('Stream error:', error);
-    res.status(500).json({ error: 'Failed to get stream URL', details: error.message });
-  }
+  exec(
+    `yt-dlp -f bestaudio --get-url --cookies /app/cookies.txt --no-warnings https://www.youtube.com/watch?v=${videoId}`,
+    { timeout: 30000 },
+    (error, stdout, stderr) => {
+      if (error) {
+        console.error('Stream error:', stderr);
+        return res.status(500).json({ error: 'Failed to get stream URL', details: stderr });
+      }
+
+      const url = stdout.trim().split('\n')[0];
+      if (!url) {
+        return res.status(500).json({ error: 'No URL found' });
+      }
+
+      res.json({ url });
+    }
+  );
 });
 
 const PORT = process.env.PORT || 8080;
