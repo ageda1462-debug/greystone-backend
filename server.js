@@ -1,6 +1,6 @@
 const express = require('express');
-const { exec } = require('child_process');
 const cors = require('cors');
+const youtubeDl = require('youtube-dl-exec');
 
 const app = express();
 app.use(cors());
@@ -11,40 +11,42 @@ app.get('/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'No query provided' });
 
-  const command = `yt-dlp "ytsearch5:${query}" --dump-json --no-playlist --flat-playlist`;
+  try {
+    const result = await youtubeDl(`ytsearch5:${query}`, {
+      dumpJson: true,
+      noPlaylist: true,
+      flatPlaylist: true,
+    });
 
-  exec(command, (error, stdout, stderr) => {
-    if (error) return res.status(500).json({ error: 'Search failed' });
+    const results = Array.isArray(result) ? result : [result];
+    const tracks = results.map(data => ({
+      id: data.id,
+      title: data.title,
+      artist: data.uploader,
+      thumbnail: data.thumbnail,
+      duration: data.duration,
+    })).filter(Boolean);
 
-    const results = stdout.trim().split('\n').map(line => {
-      try {
-        const data = JSON.parse(line);
-        return {
-          id: data.id,
-          title: data.title,
-          artist: data.uploader,
-          thumbnail: data.thumbnail,
-          duration: data.duration,
-        };
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-
-    res.json({ results });
-  });
+    res.json({ results: tracks });
+  } catch (error) {
+    res.status(500).json({ error: 'Search failed', details: error.message });
+  }
 });
 
 // Get stream URL
 app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
-  const command = `yt-dlp -f bestaudio --get-url https://www.youtube.com/watch?v=${videoId}`;
 
-  exec(command, (error, stdout, stderr) => {
-    if (error) return res.status(500).json({ error: 'Failed to get stream URL' });
-    const url = stdout.trim();
-    res.json({ url });
-  });
+  try {
+    const result = await youtubeDl(`https://www.youtube.com/watch?v=${videoId}`, {
+      format: 'bestaudio',
+      getUrl: true,
+    });
+
+    res.json({ url: result });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get stream URL', details: error.message });
+  }
 });
 
 // Health check
