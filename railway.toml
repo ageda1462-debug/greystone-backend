@@ -1,5 +1,6 @@
 [build]
 builder = "nixpacks"
+buildCommand = "pip3 install yt-dlp"
 
 [deploy]
-startCommand = "pip install yt-dlp && node server.js"
+startCommand = "node server.js"
