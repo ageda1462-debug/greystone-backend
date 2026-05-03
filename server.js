@@ -1,10 +1,27 @@
 const express = require('express');
 const cors = require('cors');
 const youtubeDl = require('youtube-dl-exec');
+const { exec } = require('child_process');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Health check
+app.get('/', (req, res) => {
+  res.json({ status: 'Greystone backend running' });
+});
+
+// Test yt-dlp installation
+app.get('/test', (req, res) => {
+  exec('yt-dlp --version', (error, stdout, stderr) => {
+    if (error) {
+      res.json({ installed: false, error: error.message, stderr });
+    } else {
+      res.json({ installed: true, version: stdout.trim() });
+    }
+  });
+});
 
 // Search YouTube
 app.get('/search', async (req, res) => {
@@ -29,7 +46,12 @@ app.get('/search', async (req, res) => {
 
     res.json({ results: tracks });
   } catch (error) {
-    res.status(500).json({ error: 'Search failed', details: error.message });
+    console.error('Search error full:', error);
+    res.status(500).json({ 
+      error: 'Search failed', 
+      details: error.message,
+      stack: error.stack 
+    });
   }
 });
 
@@ -45,15 +67,14 @@ app.get('/stream/:videoId', async (req, res) => {
 
     res.json({ url: result });
   } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ error: 'Search failed', details: error.message, stack: error.stack });
+    console.error('Stream error full:', error);
+    res.status(500).json({ 
+      error: 'Failed to get stream URL', 
+      details: error.message,
+      stack: error.stack
+    });
   }
 });
 
-// Health check
-app.get('/', (req, res) => {
-  res.json({ status: 'Greystone backend running' });
-});
-
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Greystone backend running on port ${PORT}`));
