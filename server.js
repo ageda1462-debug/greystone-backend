@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
+const ytdl = require('@distube/ytdl-core');
 
 const app = express();
 app.use(cors());
@@ -15,24 +15,10 @@ app.get('/', (req, res) => {
 
 // Test endpoint
 app.get('/test', (req, res) => {
-  exec('yt-dlp --version', (error, stdout) => {
-    res.json({ 
-      ytdlp: error ? 'not found' : stdout.trim(),
-      youtubeApiKey: YOUTUBE_API_KEY ? 'set' : 'missing'
-    });
+  res.json({ 
+    status: 'ok',
+    youtubeApiKey: YOUTUBE_API_KEY ? 'set' : 'missing'
   });
-});
-
-// List available formats for a video
-app.get('/formats/:videoId', (req, res) => {
-  const { videoId } = req.params;
-  exec(
-    `yt-dlp --list-formats --cookies /app/cookies.txt https://www.youtube.com/watch?v=${videoId}`,
-    { timeout: 30000 },
-    (error, stdout, stderr) => {
-      res.json({ output: stdout, error: stderr });
-    }
-  );
 });
 
 // Search YouTube using official API
@@ -42,7 +28,7 @@ app.get('/search', async (req, res) => {
 
   try {
     const response = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=10&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`
     );
 
     if (!response.ok) {
@@ -83,27 +69,31 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// Get stream URL using yt-dlp with cookies
-app.get('/stream/:videoId', (req, res) => {
+// Get stream URL using ytdl-core
+app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
-  exec(
-    `yt-dlp -f "bestaudio[ext=m4a]/bestaudio/best" --get-url --cookies /app/cookies.txt --js-runtimes nodejs --no-warnings https://www.youtube.com/watch?v=${videoId}`,
-    { timeout: 30000 },
-    (error, stdout, stderr) => {
-      if (error) {
-        console.error('Stream error:', stderr);
-        return res.status(500).json({ error: 'Failed to get stream URL', details: stderr });
-      }
-
-      const url = stdout.trim().split('\n')[0];
-      if (!url) {
-        return res.status(500).json({ error: 'No URL found' });
-      }
-
-      res.json({ url });
+  try {
+    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+    
+    const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+    
+    if (!audioFormats.length) {
+      return res.status(500).json({ error: 'No audio formats found' });
     }
-  );
+
+    // Get best quality audio
+    const best = audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0))[0];
+    
+    res.json({ 
+      url: best.url,
+      mimeType: best.mimeType,
+      bitrate: best.audioBitrate
+    });
+  } catch (error) {
+    console.error('Stream error:', error);
+    res.status(500).json({ error: 'Failed to get stream URL', details: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 8080;
