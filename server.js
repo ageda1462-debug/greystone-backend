@@ -23,6 +23,18 @@ app.get('/test', (req, res) => {
   });
 });
 
+// List available formats for a video
+app.get('/formats/:videoId', (req, res) => {
+  const { videoId } = req.params;
+  exec(
+    `yt-dlp --list-formats --cookies /app/cookies.txt https://www.youtube.com/watch?v=${videoId}`,
+    { timeout: 30000 },
+    (error, stdout, stderr) => {
+      res.json({ output: stdout, error: stderr });
+    }
+  );
+});
+
 // Search YouTube using official API
 app.get('/search', async (req, res) => {
   const query = req.query.q;
@@ -40,7 +52,6 @@ app.get('/search', async (req, res) => {
 
     const data = await response.json();
 
-    // Get video durations
     const videoIds = data.items.map(item => item.id.videoId).join(',');
     const detailsResponse = await fetch(
       `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds}&key=${YOUTUBE_API_KEY}`
