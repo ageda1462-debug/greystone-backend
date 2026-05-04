@@ -77,7 +77,7 @@ app.get('/stream/:videoId', (req, res) => {
   const { videoId } = req.params;
 
   exec(
-    `yt-dlp -f bestaudio --get-url --cookies /app/cookies.txt --no-warnings https://www.youtube.com/watch?v=${videoId}`,
+    `yt-dlp -f "bestaudio[ext=m4a]/bestaudio/best" --get-url --cookies /app/cookies.txt --no-warnings https://www.youtube.com/watch?v=${videoId}`,
     { timeout: 30000 },
     (error, stdout, stderr) => {
       if (error) {
