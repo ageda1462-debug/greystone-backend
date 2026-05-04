@@ -1,16 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-const ytdl = require('@distube/ytdl-core');
-const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
-const PROXY_USERNAME = process.env.PROXY_USERNAME;
-const PROXY_PASSWORD = process.env.PROXY_PASSWORD;
-const PROXY_URL = `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@p.webshare.io:80`;
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 
 // Health check
 app.get('/', (req, res) => {
@@ -22,7 +18,7 @@ app.get('/test', (req, res) => {
   res.json({ 
     status: 'ok',
     youtubeApiKey: YOUTUBE_API_KEY ? 'set' : 'missing',
-    proxy: PROXY_USERNAME ? 'set' : 'missing'
+    rapidApiKey: RAPIDAPI_KEY ? 'set' : 'missing'
   });
 });
 
@@ -74,31 +70,32 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// Get stream URL using ytdl-core with proxy
+// Get stream URL via RapidAPI
 app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
   try {
-    const agent = new HttpsProxyAgent(PROXY_URL);
-    
-    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`, {
-      requestOptions: {
-        client: agent
+    const response = await fetch(
+      `https://youtube-mp36.p.rapidapi.com/dl?id=${videoId}`,
+      {
+        method: 'GET',
+        headers: {
+          'x-rapidapi-host': 'youtube-mp36.p.rapidapi.com',
+          'x-rapidapi-key': RAPIDAPI_KEY,
+        }
       }
-    });
-    
-    const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
-    
-    if (!audioFormats.length) {
-      return res.status(500).json({ error: 'No audio formats found' });
+    );
+
+    const data = await response.json();
+
+    if (data.status !== 'ok') {
+      return res.status(500).json({ error: 'Failed to get stream URL', details: data });
     }
 
-    const best = audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0))[0];
-    
     res.json({ 
-      url: best.url,
-      mimeType: best.mimeType,
-      bitrate: best.audioBitrate
+      url: data.link,
+      title: data.title,
+      duration: data.duration
     });
   } catch (error) {
     console.error('Stream error:', error);
