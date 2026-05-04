@@ -107,4 +107,4 @@ app.get('/stream/:videoId', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.env(`Greystone backend running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Greystone backend running on port ${PORT}`));
